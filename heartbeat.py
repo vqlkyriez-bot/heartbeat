@@ -248,7 +248,6 @@ def send_to_hal(prompt):
             },
             json={
                 "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
                 "streaming": False,
             },
             timeout=120,
