@@ -4,39 +4,16 @@ One-time Oura OAuth2 token setup.
 Run this locally ONCE to get your refresh token, then add it to Railway env vars.
 
 Usage:
-    python get_token.py
+    python3 get_token.py
 """
 
 import requests
-import webbrowser
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, urlencode
 
 CLIENT_ID = "ed4e26b8-c352-4657-88a9-e1dc3a412c5d"
 CLIENT_SECRET = "TsLbI7UHlR3MfMk8L8Bh5vequ01-o445iQ7HWblzxyg"
 REDIRECT_URI = "http://localhost:8000/callback"
 SCOPES = "daily heartrate spo2 daily_stress"
-
-auth_code = None
-
-
-class CallbackHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        global auth_code
-        parsed = urlparse(self.path)
-        params = parse_qs(parsed.query)
-        if "code" in params:
-            auth_code = params["code"][0]
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Got it! You can close this window and go back to the terminal.")
-        else:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write(b"No code received. Something went wrong.")
-
-    def log_message(self, format, *args):
-        pass  # Suppress server logs
 
 
 def main():
@@ -48,20 +25,27 @@ def main():
     }
     auth_url = "https://cloud.ouraring.com/oauth/authorize?" + urlencode(params)
 
-    print("Opening Oura authorization page in your browser...")
-    print("If it doesn't open automatically, visit:")
+    print("")
+    print("Step 1: Open this URL in your browser:")
+    print("")
     print(auth_url)
     print("")
-    webbrowser.open(auth_url)
+    print("Step 2: Authorize the app.")
+    print("Step 3: You'll be redirected to a page that won't load (localhost).")
+    print("        Copy the full URL from your browser's address bar and paste it below.")
+    print("")
 
-    print("Waiting for callback on http://localhost:8000/callback ...")
-    server = HTTPServer(("localhost", 8000), CallbackHandler)
-    server.handle_request()
+    pasted = input("Paste the full redirect URL here: ").strip()
 
-    if not auth_code:
-        print("ERROR: No authorization code received.")
+    parsed = urlparse(pasted)
+    params = parse_qs(parsed.query)
+
+    if "code" not in params:
+        print("ERROR: No code found in that URL. Make sure you copied the full address bar URL.")
         return
 
+    auth_code = params["code"][0]
+    print("")
     print("Got code. Exchanging for tokens...")
 
     resp = requests.post(
