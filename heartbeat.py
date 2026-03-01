@@ -234,15 +234,20 @@ def format_biometrics(data):
 def send_to_hal(prompt):
     """Send a message to HAL via Letta API. Returns response text or None."""
     try:
+        url = LETTA_API_URL + "/v1/agents/" + HAL_AGENT_ID + "/messages"
+        params = {}
+        if LETTA_CONVERSATION_ID:
+            params["conversation_id"] = LETTA_CONVERSATION_ID
+
         resp = requests.post(
-            LETTA_API_URL + "/v1/agents/" + HAL_AGENT_ID + "/messages",
+            url,
             headers={
                 "Authorization": "Bearer " + LETTA_API_KEY,
                 "Content-Type": "application/json",
             },
+            params=params,
             json={
                 "messages": [{"role": "user", "content": prompt}],
-                "conversation_id": LETTA_CONVERSATION_ID,
                 "stream": False,
             },
             timeout=120,
