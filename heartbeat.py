@@ -106,17 +106,18 @@ def get_access_token():
 # ── Oura: Data Fetching ───────────────────────────────────────────────────────
 
 def fetch_oura_today(access_token):
-    """Fetch today's readiness and sleep from Oura v2. Returns (data_dict, error_str)."""
+    """Fetch today's readiness, sleep, and recent heart rate from Oura v2. Returns (data_dict, error_str)."""
     today = date.today().isoformat()
     headers = {"Authorization": "Bearer " + access_token}
     result = {}
 
-    endpoints = {
+    # Daily summary endpoints (use date params)
+    daily_endpoints = {
         "readiness": "https://api.ouraring.com/v2/usercollection/daily_readiness",
         "sleep": "https://api.ouraring.com/v2/usercollection/daily_sleep",
     }
 
-    for key, url in endpoints.items():
+    for key, url in daily_endpoints.items():
         try:
             resp = requests.get(
                 url,
@@ -134,6 +135,31 @@ def fetch_oura_today(access_token):
                 print("[Oura] " + key + " fetch returned " + str(resp.status_code))
         except Exception as e:
             print("[Oura] " + key + " fetch error: " + str(e))
+
+    # Heart rate: time-series endpoint, fetch last 2 hours
+    try:
+        now = datetime.now(timezone.utc)
+        two_hours_ago = now - timedelta(hours=2)
+        resp = requests.get(
+            "https://api.ouraring.com/v2/usercollection/heartrate",
+            headers=headers,
+            params={
+                "start_datetime": two_hours_ago.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "end_datetime": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            hr_data = resp.json().get("data", [])
+            if hr_data:
+                # Most recent reading
+                result["heartrate"] = hr_data[-1]
+        elif resp.status_code == 401:
+            return None, "auth_expired"
+        else:
+            print("[Oura] heartrate fetch returned " + str(resp.status_code))
+    except Exception as e:
+        print("[Oura] heartrate fetch error: " + str(e))
 
     return result, None
 
@@ -188,42 +214,61 @@ def get_biometrics():
 
 
 def format_biometrics(data):
-    """Format Oura data into a clean, readable block for HAL's prompt."""
+    """Format Oura data into a clean, readable block for HAL's prompt.
+
+    Contributor scores are 0-100 (higher = better). Actual BPM values are raw.
+    """
     lines = []
 
     readiness = data.get("readiness", {})
     sleep = data.get("sleep", {})
+    heartrate = data.get("heartrate", {})
 
+    # ── Current BPM (most recent reading) ───────────────────────────────────
+    if heartrate:
+        bpm = heartrate.get("bpm")
+        hr_source = heartrate.get("source", "")
+        hr_time = heartrate.get("timestamp", "")
+        if bpm is not None:
+            hr_label = "Current BPM: " + str(bpm) + " bpm"
+            if hr_source:
+                hr_label += " (source: " + hr_source + ")"
+            lines.append(hr_label)
+
+    # ── Readiness ────────────────────────────────────────────────────────────
     if readiness:
         score = readiness.get("score", "?")
-        lines.append("Readiness: " + str(score) + "/100")
+        lines.append("Readiness score: " + str(score) + "/100")
         contributors = readiness.get("contributors", {})
         hrv = contributors.get("hrv_balance")
         recovery = contributors.get("recovery_index")
         resting_hr = contributors.get("resting_heart_rate")
+        # These are contributor scores (0-100), not raw values
         if hrv is not None:
-            lines.append("  HRV balance: " + str(hrv))
+            lines.append("  HRV balance score: " + str(hrv) + "/100")
         if recovery is not None:
-            lines.append("  Recovery index: " + str(recovery))
+            lines.append("  Recovery index score: " + str(recovery) + "/100")
         if resting_hr is not None:
-            lines.append("  Resting HR: " + str(resting_hr))
+            lines.append("  Resting HR score: " + str(resting_hr) + "/100")
 
+    # ── Sleep ────────────────────────────────────────────────────────────────
     if sleep:
         sleep_score = sleep.get("score", "?")
-        lines.append("Sleep: " + str(sleep_score) + "/100")
+        lines.append("Sleep score: " + str(sleep_score) + "/100")
         contributors = sleep.get("contributors", {})
         total = contributors.get("total_sleep")
         efficiency = contributors.get("efficiency")
         rem = contributors.get("rem_sleep")
         deep = contributors.get("deep_sleep")
+        # All contributor scores (0-100), not minutes
         if total is not None:
-            lines.append("  Total sleep: " + str(total))
+            lines.append("  Total sleep score: " + str(total) + "/100")
         if efficiency is not None:
-            lines.append("  Efficiency: " + str(efficiency))
+            lines.append("  Efficiency score: " + str(efficiency) + "/100")
         if rem is not None:
-            lines.append("  REM: " + str(rem))
+            lines.append("  REM score: " + str(rem) + "/100")
         if deep is not None:
-            lines.append("  Deep: " + str(deep))
+            lines.append("  Deep sleep score: " + str(deep) + "/100")
 
     if not lines:
         return None
