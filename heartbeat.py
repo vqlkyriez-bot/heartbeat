@@ -241,7 +241,7 @@ def send_to_hal(prompt):
                 "Content-Type": "application/json",
             },
             json={
-                "input": prompt,
+                "messages": [{"role": "user", "content": prompt}],
                 "conversation_id": LETTA_CONVERSATION_ID,
                 "stream": False,
             },
