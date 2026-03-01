@@ -236,10 +236,9 @@ def format_biometrics(data):
 def send_to_hal(prompt):
     """Send a message to HAL via Letta API. Returns response text or None."""
     try:
-        url = LETTA_API_URL + "/v1/agents/" + HAL_AGENT_ID + "/messages"
-        params = {}
-        if LETTA_CONVERSATION_ID:
-            params["conversation_id"] = LETTA_CONVERSATION_ID
+        # Use the conversations endpoint — conversation_id goes in the URL path
+        conv_id = LETTA_CONVERSATION_ID if LETTA_CONVERSATION_ID else "default"
+        url = LETTA_API_URL + "/v1/conversations/" + conv_id + "/messages"
 
         resp = requests.post(
             url,
@@ -247,21 +246,15 @@ def send_to_hal(prompt):
                 "Authorization": "Bearer " + LETTA_API_KEY,
                 "Content-Type": "application/json",
             },
-            params=params,
             json={
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
+                "streaming": False,
             },
             timeout=120,
         )
         resp.raise_for_status()
         data = resp.json()
-
-        # Debug: show what Letta returned about conversation routing
-        usage = data.get("usage") or {}
-        run_id = data.get("run_id") or data.get("id") or "unknown"
-        print("[Letta] Response run_id: " + str(run_id))
-        print("[Letta] Keys in response: " + str(list(data.keys())))
 
         for msg in data.get("messages", []):
             if msg.get("message_type") == "assistant_message":
