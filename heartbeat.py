@@ -37,6 +37,10 @@ OURA_CLIENT_SECRET = os.getenv("OURA_CLIENT_SECRET", "")
 OURA_REFRESH_TOKEN = os.getenv("OURA_REFRESH_TOKEN", "")
 OURA_ENABLED = bool(OURA_CLIENT_ID and OURA_CLIENT_SECRET and OURA_REFRESH_TOKEN)
 
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_ENABLED = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+
 DATA_DIR = Path("/data")
 DATA_DIR.mkdir(exist_ok=True)
 TOKENS_FILE = DATA_DIR / "oura_tokens.json"
@@ -311,6 +315,78 @@ def send_to_hal(prompt):
         return None
 
 
+# ── Telegram: Send Message ────────────────────────────────────────────────────────
+
+def send_telegram_message(text):
+    """Send a message via Telegram bot API. Returns True if successful."""
+    if not TELEGRAM_ENABLED:
+        print("[Telegram] Not enabled (missing BOT_TOKEN or CHAT_ID)")
+        return False
+
+    try:
+        url = "https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage"
+        resp = requests.post(
+            url,
+            json={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": text,
+            },
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            print("[Telegram] Message sent OK")
+            return True
+        else:
+            print("[Telegram] Send failed: " + str(resp.status_code) + " " + resp.text)
+            return False
+
+    except Exception as e:
+        print("[Telegram] Send error: " + str(e))
+        return False
+
+
+def parse_telegram_directives(response_text):
+    """
+    Parse HAL's response for **SEND_TELEGRAM** directives.
+    Format: **SEND_TELEGRAM** <message>
+    Returns list of (message_text) tuples to send.
+    """
+    directives = []
+    lines = response_text.split("\n")
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        # Check if line starts with **SEND_TELEGRAM**
+        if line.startswith("**SEND_TELEGRAM**"):
+            # Extract message text after the directive
+            msg_start = line[len("**SEND_TELEGRAM**"):].strip()
+            msg_lines = [msg_start] if msg_start else []
+            
+            # Collect continuation lines until blank line or next directive
+            i += 1
+            while i < len(lines):
+                next_line = lines[i]
+                if not next_line.strip():
+                    # Blank line marks end
+                    break
+                if next_line.strip().startswith("**SEND_TELEGRAM**"):
+                    # Another directive—back up and break
+                    i -= 1
+                    break
+                msg_lines.append(next_line)
+                i += 1
+            
+            full_msg = "\n".join(msg_lines).strip()
+            if full_msg:
+                directives.append(full_msg)
+        
+        i += 1
+    
+    return directives
+
+
 # ── Heartbeat ─────────────────────────────────────────────────────────────────
 
 def build_prompt(timestamp, biometrics):
@@ -362,6 +438,14 @@ def heartbeat():
     if response:
         print("[HAL]")
         print(response)
+        
+        # Parse for Telegram directives
+        telegram_msgs = parse_telegram_directives(response)
+        if telegram_msgs:
+            print("[Telegram] Found " + str(len(telegram_msgs)) + " directive(s)")
+            for msg in telegram_msgs:
+                print("[Telegram] Sending: " + msg[:50] + ("..." if len(msg) > 50 else ""))
+                send_telegram_message(msg)
     else:
         print("[Letta] No response received")
 
@@ -378,6 +462,7 @@ def main():
     print("Conversation: " + LETTA_CONVERSATION_ID)
     print("Interval:     " + str(HEARTBEAT_INTERVAL) + " minutes")
     print("Oura:         " + ("enabled" if OURA_ENABLED else "disabled"))
+    print("Telegram:     " + ("enabled" if TELEGRAM_ENABLED else "disabled"))
     print("Data dir:     " + str(DATA_DIR))
     print("=" * 50)
     print("")
