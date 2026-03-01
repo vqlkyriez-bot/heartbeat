@@ -63,8 +63,10 @@ def load_access_token():
 def refresh_access_token():
     """Exchange refresh token for a new access token. Saves to disk. Returns token or None."""
     try:
+        print("[Oura] Refreshing token (refresh_token prefix: " + str(OURA_REFRESH_TOKEN[:8]) + "...)")
         resp = requests.post(
             "https://api.ouraring.com/oauth/token",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
             data={
                 "grant_type": "refresh_token",
                 "refresh_token": OURA_REFRESH_TOKEN,
@@ -254,6 +256,12 @@ def send_to_hal(prompt):
         )
         resp.raise_for_status()
         data = resp.json()
+
+        # Debug: show what Letta returned about conversation routing
+        usage = data.get("usage") or {}
+        run_id = data.get("run_id") or data.get("id") or "unknown"
+        print("[Letta] Response run_id: " + str(run_id))
+        print("[Letta] Keys in response: " + str(list(data.keys())))
 
         for msg in data.get("messages", []):
             if msg.get("message_type") == "assistant_message":
