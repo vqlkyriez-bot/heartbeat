@@ -34,8 +34,8 @@ HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL_MINUTES", "30"))
 
 OURA_CLIENT_ID = os.getenv("OURA_CLIENT_ID", "")
 OURA_CLIENT_SECRET = os.getenv("OURA_CLIENT_SECRET", "")
-OURA_REFRESH_TOKEN = os.getenv("OURA_REFRESH_TOKEN", "")
-OURA_ENABLED = bool(OURA_CLIENT_ID and OURA_CLIENT_SECRET and OURA_REFRESH_TOKEN)
+OURA_REFRESH_TOKEN_ENV = os.getenv("OURA_REFRESH_TOKEN", "")  # Initial bootstrap only
+OURA_ENABLED = bool(OURA_CLIENT_ID and OURA_CLIENT_SECRET and (OURA_REFRESH_TOKEN_ENV or TOKENS_FILE.exists()))
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -64,16 +64,32 @@ def load_access_token():
     return None
 
 
+def load_refresh_token():
+    """Load refresh token from persisted file. Falls back to env var for initial setup."""
+    try:
+        if TOKENS_FILE.exists():
+            tokens = json.loads(TOKENS_FILE.read_text())
+            if "refresh_token" in tokens:
+                return tokens["refresh_token"]
+    except Exception:
+        pass
+    # Bootstrap: use env var if no persisted token yet
+    return OURA_REFRESH_TOKEN_ENV
+
 def refresh_access_token():
     """Exchange refresh token for a new access token. Saves to disk. Returns token or None."""
     try:
-        print("[Oura] Refreshing token (refresh_token prefix: " + str(OURA_REFRESH_TOKEN[:8]) + "...)")
+        current_refresh_token = load_refresh_token()
+        if not current_refresh_token:
+            print("[Oura] No refresh token available for token exchange")
+            return None
+        print("[Oura] Refreshing token (refresh_token prefix: " + str(current_refresh_token[:8]) + "...)")
         resp = requests.post(
             "https://api.ouraring.com/oauth/token",
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             data={
                 "grant_type": "refresh_token",
-                "refresh_token": OURA_REFRESH_TOKEN,
+                "refresh_token": current_refresh_token,
                 "client_id": OURA_CLIENT_ID,
                 "client_secret": OURA_CLIENT_SECRET,
             },
@@ -87,10 +103,18 @@ def refresh_access_token():
         access_token = tokens["access_token"]
         expires_in = tokens.get("expires_in", 3600)
 
-        TOKENS_FILE.write_text(json.dumps({
+        # CRITICAL: Oura may rotate the refresh_token on each use. Always save new one if provided.
+        token_data = {
             "access_token": access_token,
             "expires_at": time.time() + expires_in,
-        }))
+        }
+        if "refresh_token" in tokens:
+            token_data["refresh_token"] = tokens["refresh_token"]
+        else:
+            # No new refresh_token in response; preserve the old one
+            token_data["refresh_token"] = current_refresh_token
+        
+        TOKENS_FILE.write_text(json.dumps(token_data))
         print("[Oura] Access token refreshed OK")
         return access_token
 
