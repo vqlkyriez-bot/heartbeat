@@ -184,8 +184,13 @@ def fetch_oura_today(access_token):
             hr_data = resp.json().get("data", [])
             print("[Oura] heartrate returned " + str(len(hr_data)) + " items")
             if hr_data:
-                # Most recent reading
-                result["heartrate"] = hr_data[-1]
+                # Sort by timestamp to ensure we get the most recent reading
+                hr_data_sorted = sorted(hr_data, key=lambda x: x.get("timestamp", ""), reverse=True)
+                most_recent = hr_data_sorted[0]
+                bpm = most_recent.get("bpm")
+                ts = most_recent.get("timestamp", "?")
+                print("[Oura] Most recent HR: " + str(bpm) + " bpm at " + str(ts))
+                result["heartrate"] = most_recent
         elif resp.status_code == 401:
             return None, "auth_expired"
         else:
@@ -261,8 +266,18 @@ def format_biometrics(data):
         bpm = heartrate.get("bpm")
         hr_source = heartrate.get("source", "")
         hr_time = heartrate.get("timestamp", "")
+        # Validate BPM: must be numeric and within physiological range (30-200 bpm)
+        bpm_valid = False
         if bpm is not None:
-            hr_label = "Current BPM: " + str(bpm) + " bpm"
+            try:
+                bpm_num = float(bpm)
+                if 30 <= bpm_num <= 200:
+                    bpm_valid = True
+            except (ValueError, TypeError):
+                print("[BPM] Invalid BPM value: " + str(bpm))
+        
+        if bpm_valid:
+            hr_label = "Current BPM: " + str(int(bpm)) + " bpm"
             if hr_source:
                 hr_label += " (source: " + hr_source + ")"
             lines.append(hr_label)
@@ -378,18 +393,20 @@ def parse_telegram_directives(response_text):
     Parse HAL's response for **SEND_TELEGRAM** directives.
     Format: **SEND_TELEGRAM** <message>
     Returns list of (message_text) tuples to send.
+    Searches for SEND_TELEGRAM anywhere in line (robust parsing).
     """
     directives = []
     lines = response_text.split("\n")
     
     i = 0
     while i < len(lines):
-        line = lines[i].strip()
+        line = lines[i]
         
-        # Check if line starts with **SEND_TELEGRAM**
-        if line.startswith("**SEND_TELEGRAM**"):
-            # Extract message text after the directive
-            msg_start = line[len("**SEND_TELEGRAM**"):].strip()
+        # Check if SEND_TELEGRAM appears anywhere in the line (robust)
+        if "SEND_TELEGRAM" in line:
+            # Extract message text after the directive marker
+            idx = line.find("SEND_TELEGRAM")
+            msg_start = line[idx + len("SEND_TELEGRAM"):].strip()
             msg_lines = [msg_start] if msg_start else []
             
             # Collect continuation lines until blank line or next directive
@@ -399,7 +416,7 @@ def parse_telegram_directives(response_text):
                 if not next_line.strip():
                     # Blank line marks end
                     break
-                if next_line.strip().startswith("**SEND_TELEGRAM**"):
+                if "SEND_TELEGRAM" in next_line:
                     # Another directive—back up and break
                     i -= 1
                     break
@@ -409,6 +426,7 @@ def parse_telegram_directives(response_text):
             full_msg = "\n".join(msg_lines).strip()
             if full_msg:
                 directives.append(full_msg)
+                print("[Telegram] Found directive: " + full_msg[:60] + "..." if len(full_msg) > 60 else "[Telegram] Found directive: " + full_msg)
         
         i += 1
     
