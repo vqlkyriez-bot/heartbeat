@@ -155,12 +155,13 @@ def fetch_oura_today(access_token):
             )
             if resp.status_code == 200:
                 data = resp.json().get("data", [])
+                print("[Oura] " + key + " returned " + str(len(data)) + " items")
                 if data:
                     result[key] = data[-1]
             elif resp.status_code == 401:
                 return None, "auth_expired"
             else:
-                print("[Oura] " + key + " fetch returned " + str(resp.status_code))
+                print("[Oura] " + key + " fetch returned " + str(resp.status_code) + ": " + resp.text[:100])
         except Exception as e:
             print("[Oura] " + key + " fetch error: " + str(e))
 
@@ -179,13 +180,14 @@ def fetch_oura_today(access_token):
         )
         if resp.status_code == 200:
             hr_data = resp.json().get("data", [])
+            print("[Oura] heartrate returned " + str(len(hr_data)) + " items")
             if hr_data:
                 # Most recent reading
                 result["heartrate"] = hr_data[-1]
         elif resp.status_code == 401:
             return None, "auth_expired"
         else:
-            print("[Oura] heartrate fetch returned " + str(resp.status_code))
+            print("[Oura] heartrate fetch returned " + str(resp.status_code) + ": " + resp.text[:100])
     except Exception as e:
         print("[Oura] heartrate fetch error: " + str(e))
 
