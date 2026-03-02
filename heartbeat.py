@@ -135,7 +135,9 @@ def get_access_token():
 
 def fetch_oura_today(access_token):
     """Fetch today's readiness, sleep, and recent heart rate from Oura v2. Returns (data_dict, error_str)."""
-    today = date.today().isoformat()
+    # Use EST timezone to match ring's local date
+    today_est = datetime.now(EST).date().isoformat()
+    print("[Oura] Fetching data for date: " + today_est)
     headers = {"Authorization": "Bearer " + access_token}
     result = {}
 
@@ -150,7 +152,7 @@ def fetch_oura_today(access_token):
             resp = requests.get(
                 url,
                 headers=headers,
-                params={"start_date": today, "end_date": today},
+                params={"start_date": today_est, "end_date": today_est},
                 timeout=15,
             )
             if resp.status_code == 200:
