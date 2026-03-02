@@ -32,12 +32,6 @@ HAL_AGENT_ID = os.environ["HAL_AGENT_ID"]
 LETTA_CONVERSATION_ID = os.environ["LETTA_CONVERSATION_ID"]
 HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL_MINUTES", "30"))
 
-DATA_DIR = Path("/data")
-DATA_DIR.mkdir(exist_ok=True)
-TOKENS_FILE = DATA_DIR / "oura_tokens.json"
-CACHE_FILE = DATA_DIR / "oura_cache.json"
-CACHE_TTL_HOURS = 2
-
 OURA_CLIENT_ID = os.getenv("OURA_CLIENT_ID", "")
 OURA_CLIENT_SECRET = os.getenv("OURA_CLIENT_SECRET", "")
 OURA_REFRESH_TOKEN_ENV = os.getenv("OURA_REFRESH_TOKEN", "")  # Initial bootstrap only
@@ -46,6 +40,12 @@ OURA_ENABLED = bool(OURA_CLIENT_ID and OURA_CLIENT_SECRET and (OURA_REFRESH_TOKE
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TELEGRAM_ENABLED = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+
+DATA_DIR = Path("/data")
+DATA_DIR.mkdir(exist_ok=True)
+TOKENS_FILE = DATA_DIR / "oura_tokens.json"
+CACHE_FILE = DATA_DIR / "oura_cache.json"
+CACHE_TTL_HOURS = 2
 
 EST = timezone(timedelta(hours=-5))
 
@@ -172,29 +172,26 @@ def fetch_oura_today(access_token):
         now = datetime.now(timezone.utc)
         two_hours_ago = now - timedelta(hours=2)
         resp = requests.get(
-            "https://api.ouraring.com/v2/usercollection/heartrate\",
+            "https://api.ouraring.com/v2/usercollection/heartrate",
             headers=headers,
             params={
-                \"start_datetime\": two_hours_ago.strftime(\"%Y-%m-%dT%H:%M:%SZ\"),
-                \"end_datetime\": now.strftime(\"%Y-%m-%dT%H:%M:%SZ\"),
+                "start_datetime": two_hours_ago.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "end_datetime": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             },
             timeout=15,
         )
         if resp.status_code == 200:
-            hr_data = resp.json().get(\"data\", [])
-            print(\"[Oura] heartrate returned \" + str(len(hr_data)) + \" items\")
+            hr_data = resp.json().get("data", [])
+            print("[Oura] heartrate returned " + str(len(hr_data)) + " items")
             if hr_data:
-                # Sort by timestamp to get most recent (API may not guarantee order)
-                hr_data_sorted = sorted(hr_data, key=lambda x: x.get(\"timestamp\", \"\"), reverse=True)
-                most_recent = hr_data_sorted[0]
-                print(\"[Oura] Most recent HR: \" + str(most_recent.get(\"bpm\", \"??\")) + \" bpm at \" + str(most_recent.get(\"timestamp\", \"??\")))
-                result[\"heartrate\"] = most_recent
+                # Most recent reading
+                result["heartrate"] = hr_data[-1]
         elif resp.status_code == 401:
-            return None, \"auth_expired\"
+            return None, "auth_expired"
         else:
-            print(\"[Oura] heartrate fetch returned \" + str(resp.status_code) + \": \" + resp.text[:100])
+            print("[Oura] heartrate fetch returned " + str(resp.status_code) + ": " + resp.text[:100])
     except Exception as e:
-        print(\"[Oura] heartrate fetch error: \" + str(e))
+        print("[Oura] heartrate fetch error: " + str(e))
 
     return result, None
 
@@ -261,17 +258,14 @@ def format_biometrics(data):
 
     # ── Current BPM (most recent reading) ───────────────────────────────────
     if heartrate:
-        bpm = heartrate.get(\"bpm\")
-        hr_source = heartrate.get(\"source\", \"\")
-        hr_time = heartrate.get(\"timestamp\", \"\")
-        if bpm is not None and isinstance(bpm, (int, float)) and 30 < bpm < 200:
-            hr_label = \"Current BPM: \" + str(int(bpm)) + \" bpm\"
-            if hr_time:
-                hr_label += \" (at \" + hr_time[:16] + \")\"\n            if hr_source:
-                hr_label += \" [\" + hr_source + \"]\"\n            lines.append(hr_label)
-        elif heartrate.get(\"bpm\") is not None:
-            # Invalid BPM value—log it
-            print(\"[Oura] WARNING: Invalid BPM value: \" + str(heartrate.get(\"bpm\")) + \" (full HR data: \" + str(heartrate) + \")\")
+        bpm = heartrate.get("bpm")
+        hr_source = heartrate.get("source", "")
+        hr_time = heartrate.get("timestamp", "")
+        if bpm is not None:
+            hr_label = "Current BPM: " + str(bpm) + " bpm"
+            if hr_source:
+                hr_label += " (source: " + hr_source + ")"
+            lines.append(hr_label)
 
     # ── Readiness ────────────────────────────────────────────────────────────
     if readiness:
@@ -354,11 +348,10 @@ def send_to_hal(prompt):
 def send_telegram_message(text):
     """Send a message via Telegram bot API. Returns True if successful."""
     if not TELEGRAM_ENABLED:
-        print("[Telegram] Not enabled (BOT_TOKEN: " + ("set" if TELEGRAM_BOT_TOKEN else "MISSING") + ", CHAT_ID: " + ("set" if TELEGRAM_CHAT_ID else "MISSING") + ")")
+        print("[Telegram] Not enabled (missing BOT_TOKEN or CHAT_ID)")
         return False
 
     try:
-        print("[Telegram] Sending to chat " + TELEGRAM_CHAT_ID[:10] + "...")
         url = "https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage"
         resp = requests.post(
             url,
@@ -372,8 +365,7 @@ def send_telegram_message(text):
             print("[Telegram] Message sent OK")
             return True
         else:
-            print("[Telegram] Send failed: " + str(resp.status_code))
-            print("[Telegram] Response: " + resp.text[:200])
+            print("[Telegram] Send failed: " + str(resp.status_code) + " " + resp.text)
             return False
 
     except Exception as e:
@@ -385,29 +377,19 @@ def parse_telegram_directives(response_text):
     """
     Parse HAL's response for **SEND_TELEGRAM** directives.
     Format: **SEND_TELEGRAM** <message>
-    Returns list of message_text to send.
+    Returns list of (message_text) tuples to send.
     """
     directives = []
-    if not response_text:
-        return directives
-    
     lines = response_text.split("\n")
-    print("[Telegram] Parsing response (" + str(len(lines)) + " lines)...")
     
     i = 0
     while i < len(lines):
-        line = lines[i]
-        line_stripped = line.strip()
+        line = lines[i].strip()
         
-        # Check if line contains **SEND_TELEGRAM** (anywhere, not just start)
-        if "**SEND_TELEGRAM**" in line_stripped:
-            print("[Telegram] Found directive at line " + str(i) + ": " + line_stripped[:60])
+        # Check if line starts with **SEND_TELEGRAM**
+        if line.startswith("**SEND_TELEGRAM**"):
             # Extract message text after the directive
-            parts = line_stripped.split("**SEND_TELEGRAM**", 1)
-            if len(parts) > 1:
-                msg_start = parts[1].strip()
-            else:
-                msg_start = ""
+            msg_start = line[len("**SEND_TELEGRAM**"):].strip()
             msg_lines = [msg_start] if msg_start else []
             
             # Collect continuation lines until blank line or next directive
@@ -417,7 +399,7 @@ def parse_telegram_directives(response_text):
                 if not next_line.strip():
                     # Blank line marks end
                     break
-                if "**SEND_TELEGRAM**" in next_line.strip():
+                if next_line.strip().startswith("**SEND_TELEGRAM**"):
                     # Another directive—back up and break
                     i -= 1
                     break
@@ -426,12 +408,10 @@ def parse_telegram_directives(response_text):
             
             full_msg = "\n".join(msg_lines).strip()
             if full_msg:
-                print("[Telegram] Parsed message: " + full_msg[:80] + ("..." if len(full_msg) > 80 else ""))
                 directives.append(full_msg)
         
         i += 1
     
-    print("[Telegram] Found " + str(len(directives)) + " total directive(s)")
     return directives
 
 
